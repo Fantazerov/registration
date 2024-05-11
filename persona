@@ -1,0 +1,340 @@
+import pyodbc
+import tkinter as tk
+from tkinter import messagebox, simpledialog, ttk
+import docx  # Библиотека для работы с документами Word
+
+# Подключение к базе данных Microsoft Access
+def connect_to_db():
+    try:
+        conn = pyodbc.connect(
+            r'DRIVER={Microsoft Access Driver (*.mdb, *.accdb)};DBQ=D:\VKRdb.accdb;'
+        )
+        return conn
+    except Exception as e:
+        messagebox.showerror("Ошибка подключения к БД", f"Не удалось подключиться к базе данных: {str(e)}")
+        return None  # Возврат None, если не удалось подключиться
+
+# Функция для отображения отделов на главном экране
+def display_departments():
+    conn = connect_to_db()
+
+    if conn is None:  # Проверка на успешное подключение
+        messagebox.showerror("Ошибка", "Не удалось подключиться к базе данных.")
+        return
+
+    try:
+        cursor = conn.cursor()
+
+        # Получение всех отделов
+        cursor.execute("SELECT Department_ID, Department_Name FROM Departments")
+        departments = cursor.fetchall()
+
+        if not departments:  # Проверка, что список не пуст
+            messagebox.showerror("Ошибка", "Нет данных об отделах.")
+            return
+
+        # Список отделов
+        department_listbox = tk.Listbox(root, width=60)  # Установка ширины списка
+        department_listbox.grid(row=7, column=0, columnspan=3, padx=10, pady=10, sticky="ew")  # Размещение и заполнение по ширине
+
+        # Заполнение списка
+        for department in departments:
+            department_listbox.insert(tk.END, f"ID: {department[0]} - Название: {department[1]}")
+
+        cursor.close()
+        conn.close() 
+
+    except pyodbc.Error as e:
+        messagebox.showerror("Ошибка", f"Произошла ошибка при получении данных об отделах: {str(e)}")
+
+
+# Функция отображения всех сотрудников
+def display_all_employees():
+    conn = connect_to_db()
+
+    if conn is None:  # Проверка на успешное подключение
+        messagebox.showerror("Ошибка", "Не удалось подключиться к базе данных.")
+        return
+
+    try:
+        cursor = conn.cursor()
+
+        # Получение всех сотрудников
+        cursor.execute("SELECT Employee_ID, First_Name, Last_Name, Position, Salary FROM Employees")
+        employees = cursor.fetchall()
+
+        if not employees:  # Проверка, что список не пуст
+            messagebox.showerror("Ошибка", "В базе данных нет сотрудников.")
+            return
+
+        # Открытие окна для отображения всех сотрудников
+        top = tk.Toplevel(root)
+        top.title("Все сотрудники")
+
+        # Список сотрудников
+        employee_listbox = tk.Listbox(top, width=50)  # Увеличиваем ширину списка
+        employee_listbox.pack(fill=tk.BOTH, expand=True)
+
+        # Заполнение списка
+        for employee in employees:
+            employee_listbox.insert(tk.END, f"ID: {employee[0]} - {employee[1]} {employee[2]} - {employee[3]} - {employee[4]}")
+
+    except pyodbc.Error as e:
+        messagebox.showerror("Ошибка", f"Произошла ошибка при получении данных сотрудников: {str(e)}")
+
+# Функция добавления нового сотрудника
+def add_employee():
+    # Получение данных из полей ввода
+    first_name = entry_first_name.get()
+    last_name = entry_last_name.get()
+    department_id = entry_department_id.get()
+    position = entry_position.get()
+    salary = entry_salary.get()
+
+    # Проверка, что все поля заполнены
+    if not (first_name and last_name and department_id and position and salary):
+        messagebox.showerror("Ошибка", "Все поля должны быть заполнены.")
+        return
+
+    try:
+        salary = float(salary)  # Преобразование зарплаты в число
+        department_id = int(department_id)  # Преобразование идентификатора отдела в число
+
+        # Подключение к базе данных
+        conn = connect_to_db()
+
+        if conn is None:  # Проверка, что соединение успешно
+            messagebox.showerror("Ошибка", "Не удалось подключиться к базе данных.")
+            return
+
+        cursor = conn.cursor()
+
+        # Вставка нового сотрудника
+        cursor.execute(
+            '''
+            INSERT INTO Employees (First_Name, Last_Name, Department_ID, Position, Salary)
+            VALUES (?, ?, ?, ?, ?)
+            ''',
+            first_name, last_name, department_id, position, salary
+        )
+
+        # Сохранение изменений
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        messagebox.showinfo("Успех", "Новый сотрудник добавлен.")
+
+    except ValueError:
+        messagebox.showerror("Ошибка", "Зарплата и ID отдела должны быть числами.")
+        return
+
+    except pyodbc.Error as e:
+        messagebox.showerror("Ошибка", f"Произошла ошибка при добавлении сотрудника: {str(e)}")
+
+# Функция удаления сотрудника с возможностью поиска
+def delete_employee():
+    conn = connect_to_db()
+
+    if conn is None:  # Проверка на успешное подключение
+        messagebox.showerror("Ошибка", "Не удалось подключиться к базе данных.")
+        return
+
+    try:
+        cursor = conn.cursor()
+
+        # Получение всех сотрудников
+        cursor.execute("SELECT Employee_ID, First_Name, Last_Name FROM Employees")
+        employees = cursor.fetchall()
+
+        if not employees:  # Проверка, что список не пуст
+            messagebox.showerror("Ошибка", "В базе данных нет сотрудников.")
+            return
+
+        # Окно для выбора сотрудника и поиска
+        top = tk.Toplevel(root)
+        top.title("Удаление сотрудника")
+
+        # Поле поиска
+        search_var = tk.StringVar()
+
+        def update_listbox():
+            search_text = search_var.get().lower()  # Привести к нижнему регистру для поиска
+            employee_listbox.delete(0, tk.END)  # Очистить список перед обновлением
+
+            # Добавить сотрудников, которые соответствуют поиску
+            for employee in employees:
+                if search_text in employee[1].lower() or search_text in employee[2].lower():
+                    employee_listbox.insert(tk.END, f"{employee[0]}: {employee[1]} {employee[2]}")
+
+        # Поле поиска
+        search_entry = tk.Entry(top, textvariable=search_var)
+        search_entry.pack(fill=tk.X)
+
+        # Обновление списка сотрудников при изменении поиска
+        search_var.trace("w", lambda name, index, mode: update_listbox())
+
+        # Список сотрудников для выбора
+        employee_listbox = tk.Listbox(top)
+        employee_listbox.pack(fill=tk.BOTH, expand=True)
+
+        # Инициализация списка
+        update_listbox()
+
+        # Подтверждение перед удалением
+        def confirm_deletion():
+            selection = employee_listbox.curselection()
+
+            if not selection:
+                messagebox.showerror("Ошибка", "Пожалуйста, выберите сотрудника для удаления.")
+                return
+
+            employee_index = selection[0]
+            employee_id = employees[employee_index][0]
+
+            # Подтверждение перед удалением
+            if messagebox.askyesno("Подтверждение", f"Вы уверены, что хотите удалить сотрудника {employees[employee_index][1]} {employees[employee_index][2]}?"):
+                cursor.execute("DELETE FROM Employees WHERE Employee_ID = ?", employee_id)
+                conn.commit()
+
+                messagebox.showinfo("Успех", "Сотрудник удален.")
+                top.destroy()  # Закрыть окно после удаления
+
+        confirm_button = tk.Button(top, text="Удалить", command=confirm_deletion)
+        confirm_button.pack(pady=10)
+
+    except pyodbc.Error as e:
+        messagebox.showerror("Ошибка", f"Произошла ошибка при удалении сотрудника: {str(e)}")
+
+# Функция для открытия окна с выбором документа
+def open_document_window():
+    conn = connect_to_db()
+
+    if conn is None:  # Проверка на успешное подключение
+        messagebox.showerror("Ошибка", "Не удалось подключиться к базе данных.")
+        return
+
+    try:
+        cursor = conn.cursor()
+
+        # Получение всех сотрудников
+        cursor.execute("SELECT Employee_ID, First_Name, Last_Name FROM Employees")
+        employees = cursor.fetchall()
+
+        if not employees:  # Проверка, что список не пуст
+            messagebox.showerror("Ошибка", "В базе данных нет сотрудников.")
+            return
+
+        # Открытие окна с выбором заявления
+        top = tk.Toplevel(root)
+        top.title("Выбор заявления")
+
+        # Кнопки для выбора заявления
+        def create_document(document_type):
+            # Функция, которая открывает документ на основе выбора
+            document_type_map = {
+                "Hiring": "Заявление о трудоустройстве",
+                "Termination": "Заявление об увольнении",
+                "Leave": "Заявление о предоставлении отпуска",
+                "Other": "Иное заявление",
+            }
+
+            # Выбор сотрудника
+            search_var = tk.StringVar()
+
+            def update_listbox():
+                search_text = search_var.get().lower()
+                employee_listbox.delete(0, tk.END)
+
+                # Обновление списка сотрудников
+                for employee in employees:
+                    if search_text in employee[1].lower() or search_text in employee[2].lower():
+                        employee_listbox.insert(tk.END, f"{employee[0]}: {employee[1]} {employee[2]}")
+
+            # Поле поиска
+            search_entry = tk.Entry(top, textvariable=search_var)
+            search_entry.pack(fill=tk.X)
+
+            # Обновление списка сотрудников при изменении поиска
+            search_var.trace("w", lambda name, index, mode: update_listbox())
+
+            # Список сотрудников для выбора
+            employee_listbox = tk.Listbox(top)
+            employee_listbox.pack(fill=tk.BOTH, expand=True)
+
+            # Инициализация списка
+            update_listbox()
+
+            def confirm_document():
+                selection = employee_listbox.curselection()
+
+                if not selection:
+                    messagebox.showerror("Ошибка", "Пожалуйста, выберите сотрудника.")
+                    return
+
+                employee_index = selection[0]
+                employee_id = employees[employee_index][0]
+
+                doc = docx.Document()
+
+                doc.add_heading(document_type_map[document_type], level=1)
+                doc.add_paragraph("Заявитель: " + f"{employees[employee_index][1]} {employees[employee_index][2]}")
+
+                doc.save(f"{document_type}_Application_{employee_id}.docx")
+
+                messagebox.showinfo("Успех", f"Документ '{document_type}' успешно создан.")
+                top.destroy()
+
+            confirm_button = tk.Button(top, text="Создать документ", command=confirm_document)
+            confirm_button.pack(pady=10)
+
+        button_frame = tk.Frame(top)
+        button_frame.pack(pady=10)
+
+        tk.Button(button_frame, text="Заявление о трудоустройстве", command=lambda: create_document("Hiring")).pack(side=tk.LEFT)
+        tk.Button(button_frame, text="Заявление об увольнении", command=lambda: create_document("Termination")).pack(side=tk.LEFT)
+        tk.Button(button_frame, text="Заявление о предоставлении отпуска", command=lambda: create_document("Leave")).pack(side=tk.LEFT)
+        tk.Button(button_frame, text="Иное заявление", command=lambda: create_document("Other")).pack(side=tk.LEFT)
+
+    except pyodbc.Error as e:
+        messagebox.showerror("Ошибка", f"Произошла ошибка при получении данных сотрудников: {str(e)}")
+
+# Главное окно программы
+root = tk.Tk()
+root.title("Кадровый учет")
+
+# Кнопки для выбора функции
+add_employee_button = tk.Button(root, text="Добавить сотрудника", command=add_employee)
+delete_employee_button = tk.Button(root, text="Удалить сотрудника", command=delete_employee)
+documents_button = tk.Button(root, text="Документы", command=open_document_window)
+display_all_button = tk.Button(root, text="Все данные", command=display_all_employees)
+
+add_employee_button.grid(row=0, column=0, padx=10, pady=10)
+delete_employee_button.grid(row=0, column=1, padx=10, pady=10)
+documents_button.grid(row=0, column=2, padx=10, pady=10)
+display_all_button.grid(row=0, column=3, padx=10, pady=10)  # Кнопка для отображения всех сотрудников
+
+# Поля ввода для добавления нового сотрудника
+tk.Label(root, text="Имя:").grid(row=1, column=0)
+entry_first_name = tk.Entry(root)
+entry_first_name.grid(row=1, column=1)
+
+tk.Label(root, text="Фамилия:").grid(row=2, column=0)
+entry_last_name = tk.Entry(root)
+entry_last_name.grid(row=2, column=1)
+
+tk.Label(root, text="ID отдела:").grid(row=3, column=0)
+entry_department_id = tk.Entry(root)
+entry_department_id.grid(row=3, column=1)
+
+tk.Label(root, text="Должность:").grid(row=4, column=0)
+entry_position = tk.Entry(root)
+entry_position.grid(row=4, column=1)
+
+tk.Label(root, text="Зарплата:").grid(row=5, column=0)
+entry_salary = tk.Entry(root)
+entry_salary.grid(row=5, column=1)
+
+display_departments()  # Вызов функции для отображения данных об отделах
+
+root.mainloop()  # Запуск графического интерфейса
